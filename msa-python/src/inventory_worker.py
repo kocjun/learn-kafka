@@ -19,7 +19,7 @@ def simulate_inventory_check(event: Dict[str, Any]) -> Dict[str, Any]:
     status = "reserved" if quantity <= 5 else "failed"
     
     return {
-        "event_type": f"inventory_{status}",
+        "event_type": f"inventory.{status}",
         "order_id": event["order_id"],
         "product_id": event["product_id"],
         "quantity": quantity,
@@ -39,7 +39,7 @@ def emit_inventory_event(inv_event: Dict[str, Any]) -> None:
     
 def emit_log_event(original_event: Dict[str, Any], inv_event: Dict[str, Any]) -> None:
     log_event = {
-        "event_type": "log.inventory_check",
+        "event_type": "log.inventory.check",
         "order_id": original_event["order_id"],
         "product_id": original_event["product_id"],
         "requested_quantity": original_event["quantity"],

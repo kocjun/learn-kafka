@@ -26,7 +26,7 @@ async def create_order(req: OrderRequest):
     
     
     event = {
-        "event_type": "order_created",
+        "event_type": "order.created",
         "order_id": order_id, 
         "user_id": req.user_id, 
         "product_id": req.product_id,
