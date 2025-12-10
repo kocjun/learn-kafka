@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Dict
 
 from confluent_kafka import Message
-from .kafka_producer import create_producer, send_event
+from .kafka_producer import create_producer, send_event, wrap_event
 from .kafka_consumer import create_consumer, run_consumer_loop
 
 producer = create_producer()
@@ -33,7 +33,6 @@ def try_create_shipping(order_id: str) -> None:
         payment_event = state["payment_event"]
         
         shipping_event = {
-            "event_type": "shipping.created",
             "order_id": order_id,
             "user_id": payment_event["user_id"],
             "product_id": inventory_event["product_id"],
@@ -43,27 +42,36 @@ def try_create_shipping(order_id: str) -> None:
             "source": "shipping-worker",
             "version": "v1",
         }
+        shipping_envelope = wrap_event(
+            event_type="shipping.created",
+            source="shipping-worker",
+            data=shipping_event,
+        )
         
         send_event(
             producer = producer,
             topic = "shipping",
             key = order_id,
-            value = shipping_event,
+            value = shipping_envelope,
         )
         
         log_event = {
-            "event_type": "log.shipping.created",
             "order_id": order_id,
             "created_at": datetime.utcnow().isoformat(),
             "source": "shipping-worker",
             "version": "v1",
         }
+        log_envelope = wrap_event(
+            event_type="log.shipping.created",
+            source="shipping-worker",
+            data=log_event,
+        )
 
         send_event(
             producer = producer,
             topic = "logs",
             key = order_id,
-            value = log_event,
+            value = log_envelope,
         )
         
         del order_states[order_id]
@@ -73,8 +81,10 @@ def handle_message(msg: Message) -> None:
     if value is None:
         return
     
-    event = json.loads(value.decode("utf-8"))
-    event_type = event.get("event_type")
+    envelope = json.loads(value.decode("utf-8"))
+    meta = envelope.get("meta", {})
+    event = envelope.get("data", {})
+    event_type = meta.get("event_type")
     order_id = event.get("order_id")
     topic = msg.topic()
 

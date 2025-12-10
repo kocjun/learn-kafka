@@ -5,7 +5,7 @@ from typing import Any, Dict
 from confluent_kafka import Message
 
 from .kafka_consumer import create_consumer, run_consumer_loop
-from .kafka_producer import create_producer, send_event
+from .kafka_producer import create_producer, send_event, wrap_event
 
 producer = create_producer()
 
@@ -19,7 +19,6 @@ def simulate_inventory_check(event: Dict[str, Any]) -> Dict[str, Any]:
     status = "reserved" if quantity <= 5 else "failed"
     
     return {
-        "event_type": f"inventory.{status}",
         "order_id": event["order_id"],
         "product_id": event["product_id"],
         "quantity": quantity,
@@ -30,16 +29,20 @@ def simulate_inventory_check(event: Dict[str, Any]) -> Dict[str, Any]:
     }
     
 def emit_inventory_event(inv_event: Dict[str, Any]) -> None:
+    envelope = wrap_event(
+        event_type=f"inventory.{inv_event['status']}",
+        source="inventory-worker",
+        data=inv_event,
+    )
     send_event(
-        producer = producer,
-        topic = "inventory",
-        key = inv_event["order_id"],
-        value = inv_event,
+        producer=producer,
+        topic="inventory",
+        key=inv_event["order_id"],
+        value=envelope,
     )
     
 def emit_log_event(original_event: Dict[str, Any], inv_event: Dict[str, Any]) -> None:
     log_event = {
-        "event_type": "log.inventory.check",
         "order_id": original_event["order_id"],
         "product_id": original_event["product_id"],
         "requested_quantity": original_event["quantity"],
@@ -48,11 +51,16 @@ def emit_log_event(original_event: Dict[str, Any], inv_event: Dict[str, Any]) ->
         "source": "inventory-worker",
         "version": "v1",
     }
+    envelope = wrap_event(
+        event_type="log.inventory.check",
+        source="inventory-worker",
+        data=log_event,
+    )
     send_event(
-        producer = producer,
-        topic = "logs",
-        key = log_event["order_id"],
-        value = log_event,
+        producer=producer,
+        topic="logs",
+        key=log_event["order_id"],
+        value=envelope,
     )
     
 def handle_order_message(msg: Message) -> None:
@@ -60,8 +68,10 @@ def handle_order_message(msg: Message) -> None:
     if value is None:
         return
     
-    event = json.loads(value.decode("utf-8"))
-    print(f"Received event: {event}")
+    envelope = json.loads(value.decode("utf-8"))
+    meta = envelope.get("meta", {})
+    event = envelope.get("data", {})
+    print(f"Received event: {meta.get('event_type')} data={event}")
     
     inv_event = simulate_inventory_check(event)
     

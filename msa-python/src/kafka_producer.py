@@ -1,13 +1,27 @@
 import json
+import uuid
+from datetime import datetime
+from confluent_kafka import Producer
 from typing import Any, Dict 
 
-from confluent_kafka import Producer
+def wrap_event(event_type: str, source: str, data: dict) -> dict:
+    return {
+        "meta": {
+            "event_type": event_type,
+            "event_version": "v1",
+            "event_id": str(uuid.uuid4()),
+            "source": source,
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+        "data": data
+    }
+    
+
 
 def create_producer(bootstrap_servers: str = "localhost:19092") -> Producer:
     config = {
         "bootstrap.servers": bootstrap_servers,
-        "client.id": "order-api",
-        "linger.ms": 10,
+        "client.id": "msa-python",
         "acks": "all",
     }
     return Producer(config)
@@ -15,23 +29,31 @@ def create_producer(bootstrap_servers: str = "localhost:19092") -> Producer:
 def send_event(
     producer: Producer,
     topic: str,
-    key: str, 
-    value: Dict[str, Any], 
-) -> None: 
-    """
-    공통 이벤트 발행 함수
-    - value 는 dict 로 받고 JSON 으로 변환하여 전송
-    """
+    key: str,
+    value: Dict[str, Any] | None = None,
+    event: Dict[str, Any] | None = None,
+) -> None:
+    """Produce a JSON-encoded message with delivery logging."""
+
+    payload = value if value is not None else event
+    if payload is None:
+        raise ValueError("send_event requires `value` (preferred) or `event` data.")
+
     def delivery_report(err, msg):
         if err is not None:
-            print(f"Delivery failed for record {msg.key()}: {err}")
+            print(f"Delivery failed: {err}")
         else:
-            print(f"Record produced to {msg.topic()} [{msg.partition()}] @ offset {msg.offset()}")
-    
+            print(
+                f"Delivered to {msg.topic()} [{msg.partition()}] "
+                f"offset={msg.offset()}"
+            )
+
     producer.produce(
-        topic = topic,
-        key = key.encode("utf-8"),
-        value = json.dumps(value).encode("utf-8"),
-        callback = delivery_report,
+        topic=topic,
+        key=key.encode("utf-8"),
+        value=json.dumps(payload).encode("utf-8"),
+        callback=delivery_report,
     )
-    producer.poll(0) # 비동기 콜백 처리
+
+    # 비동기 이벤트 처리
+    producer.poll(0)
