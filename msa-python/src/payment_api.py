@@ -15,7 +15,10 @@ class PaymentApprovalRequest(BaseModel):
     user_id: str
     amount: int
     method: str
-
+    
+@app.get("/")
+def health():
+    return {"status": "ok"}
 
 @app.post("/payments/approve")
 async def approve_payment(req: PaymentApprovalRequest):

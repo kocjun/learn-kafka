@@ -1,7 +1,8 @@
-import signal
-from typing import Callable, List
-
 from confluent_kafka import Consumer, KafkaException, Message
+
+from typing import Callable, List
+import signal
+import time
 
 
 def create_consumer(
@@ -14,11 +15,13 @@ def create_consumer(
         "bootstrap.servers": bootstrap_servers,
         "group.id": group_id,
         "auto.offset.reset": "earliest", # 처음부터 읽기 (개발용)
-        "enable.auto.commit": True,
+        "enable.auto.commit": False,   # 수동 커밋
+        "max.poll.interval.ms": 300000, # 5분
     }
     consumer = Consumer(config)
     consumer.subscribe(topics)
     return consumer
+
 
 def run_consumer_loop(
     consumer: Consumer,
@@ -46,7 +49,11 @@ def run_consumer_loop(
             if msg.error():
                 raise KafkaException(msg.error())
 
-            handle_message(msg)
+            sucess = handle_message(msg)
+            
+            # 성공시에만 커밋
+            if sucess:
+                consumer.commit(msg)
     except KafkaException as exc:
         print(f"Kafka error: {exc}")
     finally:

@@ -6,6 +6,8 @@ from confluent_kafka import Message
 
 from .kafka_consumer import create_consumer, run_consumer_loop
 from .kafka_producer import create_producer, send_event, wrap_event
+from .idempotency import is_duplicate, mark_processed, retry_with_backoff
+from .dlq import send_to_dlq
 
 producer = create_producer()
 
@@ -64,22 +66,73 @@ def emit_log_event(original_event: Dict[str, Any], inv_event: Dict[str, Any]) ->
     )
     
 def handle_order_message(msg: Message) -> None:
-    value = msg.value()
-    if value is None:
-        return
-    
-    envelope = json.loads(value.decode("utf-8"))
-    meta = envelope.get("meta", {})
-    event = envelope.get("data", {})
-    print(f"Received event: {meta.get('event_type')} data={event}")
-    
-    inv_event = simulate_inventory_check(event)
-    
-    # 1) inventory 토픽으로 결과 이벤트 발행
-    emit_inventory_event(inv_event)
+    event = json.loads(msg.value().decode())
+    meta = event["meta"]
+    data = event["data"]
 
-    # 2) logs 토픽으로 로그 이벤트 발행
-    emit_log_event(event, inv_event)
+    event_id = meta["event_id"]
+    
+    # 1) 중복 체크
+    if is_duplicate(event_id):
+        print(f"Duplicate ignored: {event_id}")
+        return True  # commit
+    
+    try:
+        def business_logic():
+            if data["quantity"] <= 5:
+                status = "reserved"
+            else:
+                raise ValueError("out_of_stock")
+
+            inv_event = wrap_event(
+                event_type="inventory.reserved",
+                source="inventory-worker",
+                data={
+                    "order_id": data["order_id"],
+                    "product_id": data["product_id"],
+                    "quantity": data["quantity"],
+                    "status": status,
+                }
+            )
+            
+            send_event(
+                producer=producer,
+                topic="inventory",
+                key=data["order_id"],
+                value=inv_event,
+            )
+
+        retry_with_backoff(business_logic)
+        mark_processed(event_id)
+        return True
+
+    except ValueError as e:
+        # ❌ 논리 오류 → 실패 이벤트 발행 + DLQ
+        fail_event = wrap_event(
+            event_type="inventory.failed",
+            source="inventory-worker",
+            data={
+                "order_id": data["order_id"],
+                "product_id": data["product_id"],
+                "quantity": data["quantity"],
+                "status": "failed",
+                "reason": str(e),
+            },
+        )
+        send_event(
+            producer=producer,
+            topic="inventory",
+            key=data["order_id"],
+            value=fail_event,
+        )
+        send_to_dlq(producer, event, str(e))
+        mark_processed(event_id)
+        return True
+
+    except Exception as e:
+        # ❌ 재시도 실패 → 커밋하지 않음 (다시 소비)
+        print(f"🔥 processing failed: {e}")
+        return False
 
 
 def main() -> None:

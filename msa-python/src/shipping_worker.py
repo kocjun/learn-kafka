@@ -12,8 +12,12 @@ order_states: dict[str, Dict[str, Any]] = {}
 
 def update_state_from_inventory(event: Dict[str, Any]) -> None:
     order_id = event["order_id"]
+    status = event.get("status")
+    if not status:
+        print(f"Skipping inventory event without status: {event}")
+        return
     state = order_states.setdefault(order_id, {})
-    state["inventory_status"] = event["status"]
+    state["inventory_status"] = status
     state["inventory_event"] = event
     
 def update_state_from_payment(event: Dict[str, Any]) -> None:
@@ -79,7 +83,7 @@ def try_create_shipping(order_id: str) -> None:
 def handle_message(msg: Message) -> None:
     value = msg.value()
     if value is None:
-        return
+        return True
     
     envelope = json.loads(value.decode("utf-8"))
     meta = envelope.get("meta", {})
@@ -87,6 +91,10 @@ def handle_message(msg: Message) -> None:
     event_type = meta.get("event_type")
     order_id = event.get("order_id")
     topic = msg.topic()
+
+    if not event or not event_type or not order_id:
+        print(f"Skipping malformed event: meta={meta}, data={event}")
+        return True
 
     inventory_events = {"inventory.reserved", "inventory.failed"}
 
@@ -96,10 +104,11 @@ def handle_message(msg: Message) -> None:
         update_state_from_payment(event)
     else:
         print(f"Skipping event type {event_type} from topic {topic}")
-        return
+        return True
 
     if order_id:
         try_create_shipping(order_id)
+    return True
         
 def main() -> None:
     consumer = create_consumer(
