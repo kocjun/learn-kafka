@@ -1,13 +1,14 @@
+import uuid
+from datetime import datetime
+
 from fastapi import FastAPI
 from pydantic import BaseModel
-from datetime import datetime
-import uuid
 
-from .kafka_producer import create_producer, send_event, wrap_event
+from .common.config import settings
+from .common.db import transaction
+from .kafka_producer import wrap_event
 
 app = FastAPI()
-
-producer = create_producer()
 
 class OrderRequest(BaseModel):
     order_id: str | None = None
@@ -21,9 +22,8 @@ def health():
     
 @app.post("/orders")
 async def create_order(req: OrderRequest):
-    # order_id 가 없으면 생성
     order_id = req.order_id or str(uuid.uuid4())
-    
+
     event_data = {
         "order_id": order_id,
         "user_id": req.user_id,
@@ -37,18 +37,50 @@ async def create_order(req: OrderRequest):
         source="order-api",
         data=event_data,
     )
-    
-    # kafka "orders" 토픽으로 발행 
-    send_event(
-        producer = producer,
-        topic = "orders",
-        key = order_id, 
-        value = event,
-    )
-    
-    # client 응답
+
+    # DB 트랜잭션으로 주문 + 아웃박스 기록
+    with transaction() as cur:
+        cur.execute(
+            """
+            INSERT INTO orders (id, user_id, product_id, quantity, status, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                order_id,
+                req.user_id,
+                req.product_id,
+                req.quantity,
+                "created",
+                datetime.utcnow(),
+            ),
+        )
+        cur.execute(
+            """
+            INSERT INTO outbox (
+                aggregate_type,
+                aggregate_id,
+                event_type,
+                event_id,
+                payload,
+                status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                "orders",
+                order_id,
+                "order.created",
+                uuid.uuid4(),
+                event["data"],
+                "pending",
+            ),
+        )
+
     return {
         "status": "success",
         "order_id": order_id,
-        "event": event,
+        "outbox_enqueued": True,
+        "kafka_topic": "orders",
+        "outbox_table": settings.db_name,
     }
