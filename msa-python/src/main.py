@@ -1,8 +1,10 @@
+import json
 import uuid
 from datetime import datetime
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from psycopg.types.json import Jsonb
 
 from .common.config import settings
 from .common.db import transaction
@@ -72,7 +74,7 @@ async def create_order(req: OrderRequest):
                 order_id,
                 "order.created",
                 uuid.uuid4(),
-                event["data"],
+                Jsonb(event["data"]),  # JSONB 안전 변환
                 "pending",
             ),
         )
