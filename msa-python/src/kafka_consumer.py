@@ -3,16 +3,18 @@ from confluent_kafka import Consumer, KafkaException, Message
 from typing import Callable, List
 import signal
 import time
+import os
 
+BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 
 def create_consumer(
     group_id: str,
     topics: List[str],
-    bootstrap_servers: str = "localhost:19092",
+    bootstrap_servers: str | None = None,
 ) -> Consumer:
-    
+    bootstrap = bootstrap_servers or BOOTSTRAP
     config = {
-        "bootstrap.servers": bootstrap_servers,
+        "bootstrap.servers": bootstrap,
         "group.id": group_id,
         "auto.offset.reset": "earliest", # 처음부터 읽기 (개발용)
         "enable.auto.commit": False,   # 수동 커밋

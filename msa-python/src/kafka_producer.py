@@ -3,6 +3,9 @@ import uuid
 from datetime import datetime
 from confluent_kafka import Producer
 from typing import Any, Dict 
+import os
+
+BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 
 def wrap_event(event_type: str, source: str, data: dict) -> dict:
     return {
@@ -18,9 +21,10 @@ def wrap_event(event_type: str, source: str, data: dict) -> dict:
     
 
 
-def create_producer(bootstrap_servers: str = "localhost:19092") -> Producer:
+def create_producer(bootstrap_servers: str | None = None) -> Producer:
+    bootstrap = bootstrap_servers or BOOTSTRAP
     config = {
-        "bootstrap.servers": bootstrap_servers,
+        "bootstrap.servers": bootstrap,
         "client.id": "msa-python",
         "acks": "all",
     }
